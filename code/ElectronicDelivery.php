@@ -9,12 +9,18 @@
  * and the Order Status Log contains all the downloadable files.
  *
  *
+ *
+ * NOTA BENE: your buyable MUST have the following method:
+ * DownloadFiles();
+ *
+ * This
+ *
  */
 
 
 class ElectronicDelivery_OrderStep extends OrderStep {
 
-	public $db = array(
+	static $db = array(
 		"NumberOfHoursBeforeDownloadGetsDeleted" => "Int"
 	);
 
@@ -25,8 +31,7 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 		"AdditionalFile4" => "File",
 		"AdditionalFile5" => "File",
 		"AdditionalFile6" => "File",
-		"AdditionalFile7" => "File",
-		"Log" => "ElectronicDelivery_OrderLog"
+		"AdditionalFile7" => "File"
 	);
 
 	public static $defaults = array(
@@ -35,20 +40,23 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 		"CustomerCanCancel" => 0,
 		"Name" => "Download",
 		"Code" => "DOWNLOAD",
-		"Sort" => 52,
-		"ShowAsUncompletedOrder" => 0
+		"Sort" => 37,
+		"ShowAsUncompletedOrder" => 0,
+		"ShowAsInProcessOrder" => 1,
+		"NumberOfHoursBeforeDownloadGetsDeleted" => 72
 	);
 
 	public function getCMSFields() {
 		$fields = parent::getCMSFields();
-		$fields->addFieldToTab("Root.Main", new TextField("NumberOfHoursBeforeDownloadGetsDeletedHeader", _t("OrderStep.NUMBEROFHOURSBEFOREDOWNLOADGETSDELETED", "Number of hours before download gets deleted"), 3), "NumberOfHoursBeforeDownloadGetsDeleted");
+		$fields->addFieldToTab("Root.Main", new HeaderField("NumberOfHoursBeforeDownloadGetsDeleted_Header", _t("OrderStep.NUMBEROFHOURSBEFOREDOWNLOADGETSDELETED", "Download Management"), 3), "NumberOfHoursBeforeDownloadGetsDeleted");
+		$fields->addFieldToTab("Root.Main", new HeaderField("AdditionalFile1_Header", _t("OrderStep.ADDITIONALFILE", "Files added to download"), 3), "AdditionalFile1");
 		return $fields;
 	}
 
 	/**
 	 * Can always run step.
-	 *@param DataObject - $order Order
-	 *@return Boolean
+	 * @param DataObject - $order Order
+	 * @return Boolean
 	 **/
 	public function initStep($order) {
 		$oldDownloadFolders = $this->getFoldersToBeExpired();
@@ -58,6 +66,7 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 				$oldDownloadFolder->write();
 			}
 		}
+		return true;
 	}
 
 	/**
@@ -66,10 +75,10 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 *@return Boolean
 	 **/
 	public function doStep($order) {
-		if(!$this->ElectronicDeliveryOrderLog()) {
+		if(!DataObject::get_one("ElectronicDelivery_OrderLog", "\"OrderID\" = ".$order->ID)) {
 			$files = new DataObjectSet();
-			foreach($i = 1; $i < 8; $i++) {
-				$fieldName = "AdditionalFile".$i;
+			for($i = 1; $i < 8; $i++) {
+				$fieldName = "AdditionalFile".$i."ID";
 				if($this->$fieldName) {
 					$file = DataObject::get_by_id("File", $this->$fieldName);
 					$files->push($file);
@@ -78,22 +87,24 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 			$items = $order->Items();
 			if($items) {
 				foreach($items as $item) {
-					if(method_exists($item, "DownloadFiles")) {
-						$itemDownloadFiles = $item->DownloadFiles();
-						if($itemDownloadFiles) {
-							foreach($itemDownloadFiles as $itemDownloadFile) {
-								$files->push($itemDownloadFile);
+					$buyable = $item->Buyable();
+					if($buyable) {
+						if(method_exists($buyable, "DownloadFiles")) {
+							$itemDownloadFiles = $buyable->DownloadFiles();
+							if($itemDownloadFiles) {
+								foreach($itemDownloadFiles as $itemDownloadFile) {
+									$files->push($itemDownloadFile);
+								}
 							}
 						}
 					}
 				}
 			}
-			if($files) {
-				$log = new ElectronicDelivery_OrderLog();
-				$log->OrderID = $order->ID;
-				$log->write();
-				$log->AddFiles($files);
-			}
+			$log = new ElectronicDelivery_OrderLog();
+			$log->OrderID = $order->ID;
+			$log->AuthorID = $order->MemberID;
+			$log->write();
+			$log->AddFiles($files);
 		}
 		return true;
 	}
@@ -107,7 +118,7 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 **/
 	function addOrderStepFields(&$fields, $order) {
 		$fields = parent::addOrderStepFields($fields, $order);
-		$fields->addFieldToTab("Root.Next", new HeaderField("DownloadFiles", "Download Files", 3), "ActionNextStepManually");
+		$fields->addFieldToTab("Root.Next", new HeaderField("DownloadFiles", "Files are available for download", 3), "ActionNextStepManually");
 		return $fields;
 	}
 
@@ -121,7 +132,7 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 
 
 	protected function getFoldersToBeExpired() {
-		return DB::get(
+		return DataObject::get(
 			"ElectronicDelivery_OrderLog",
 			"\"Expired\" = 0 AND UNIX_TIMESTAMP(NOW())  - UNIX_TIMESTAMP(\"Created\")  > (60 * 60 * 24 * ".$this->NumberOfHoursBeforeDownloadGetsDeleted." ) "
 		);
@@ -184,7 +195,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 
 	function populateDefaults(){
 		parent::populateDefaults();
-		$this->Note =  "<p>"._t("OrderLog.NODOWNLOADSAREAVAILABLEYE", "No downloads are available yet.")."</p>"
+		$this->Note =  "<p>"._t("OrderLog.NODOWNLOADSAREAVAILABLEYE", "No downloads are available yet.")."</p>";
 	}
 
 	/**
@@ -304,24 +315,40 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 		if(!$this->OrderID) {
 			user_error("Tried to add files to an ElectronicDelivery_OrderStatus object without an OrderID");
 		}
-		if($dosWithFiles){
-			$folder = $this->createOrderDownloadFolder();
+		if($dosWithFiles && $dosWithFiles->count()){
+			$fullFolderPath = $this->createOrderDownloadFolder(true);
+			$folderOnlyPart = $this->createOrderDownloadFolder(false);
 			$existingFiles = $this->Files();
+			$alreadyCopiedFileNameArray = array();
 			foreach($dosWithFiles as $file) {
 				if($file->exists()) {
 					$existingFiles->add($file);
-					$this->FilesAsString .= "|||".serialize($file);
-					$destinationFile = $this->createOrderDownloadFolder()."/".$file->Filename;
-					$destinationURL = Director::baseURL()."/".$this->getBaseFolder(false)."/".$file->FileName;
-					if(copy($file->getFullPath, $destinationFile)) {
-						$this->Note .= '<li><a href="'.$destinationURL.'">'.$file->Title.'</a></li>';
+					$copyFrom = $file->getFullPath();
+					$fileName = $file->Name;
+					if(file_exists($copyFrom)) {
+						$destinationFile = $fullFolderPath."/".$file->Name;
+						$destinationURL = Director::absoluteURL("/".$this->getBaseFolder(false)."/".$folderOnlyPart."/".$fileName);
+						if(!in_array($copyFrom, $alreadyCopiedFileNameArray)) {
+							$alreadyCopiedFileNameArray[] = $fileName;
+							if(copy($copyFrom, $destinationFile)) {
+								$this->FilesAsString .= "\r\n COPYING $copyFrom to $destinationFile \r\n |||".serialize($file);
+								$this->Note .= '<li><a href="'.$destinationURL.'">'.$file->Title.'</a></li>';
+							}
+						}
+					}
+					else {
+						$this->Note .= "<li>"._t("OrderLog.NOTINCLUDEDIS", "no download available: ").$file->Title."</li>";
 					}
 				}
 			}
 		}
+		else {
+			$this->Note .= "<li>"._t("OrderStatusLog.THEREARENODOWNLOADSWITHTHISORDER", "There are no downloads for this order.")."</li>";
+		}
 		$this->Note .= "</ul>";
 		$this->Expired = false;
 		$this->write();
+
 	}
 
 
@@ -331,7 +358,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 */
 	function onBeforeWrite() {
 		parent::onBeforeWrite();
-		$this->createOrderDownloadFolder();
+		$this->FolderName = $this->createOrderDownloadFolder(true);
 	}
 
 	/**
@@ -355,8 +382,10 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 */
 	function onBeforeDelete(){
 		parent::onBeforeDelete();
-		$this->deleteFolderContents();
-		unlink($this->FolderName);
+		if($this->FolderName) {
+			$this->deleteFolderContents();
+			@unlink($this->FolderName);
+		}
 	}
 
 	/**
@@ -380,11 +409,13 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 * @return String | NULL
 	 */
 	protected function createOrderDownloadFolder($absolutePath = true){
+		//already exists - do nothing
 		if($this->FolderName) {
 			$fullFolderName = $this->FolderName;
 		}
 		else {
-			$randomFolderName = substr(md5(time()+rand(1,999)), 0, self::$random_filder_name_character_count)."_".$this->OrderID;
+		//create folder....
+			$randomFolderName = substr(md5(time()+rand(1,999)), 0, self::$random_folder_name_character_count)."_".$this->OrderID;
 			$fullFolderName = $this->getBaseFolder(true)."/".$randomFolderName;
 			if(file_exists($fullFolderName)) {
 				$allOk = true;
@@ -392,19 +423,18 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 			else {
 				$allOk = @mkdir($fullFolderName, self::get_permissions_on_folder());
 			}
-			if($allOk) }{
+			if($allOk){
 				$this->FolderName = $fullFolderName;
-				$this->write();
 			}
-			return NULL;
 		}
 		if($absolutePath) {
 			return $fullFolderName;
 		}
 		else {
 			//TO DO: test
-			return str_replace(Director::baseURL(), "", $fullFolderName);
+			return str_replace($this->getBaseFolder(true)."/", "", $fullFolderName);
 		}
+		return "error";
 	}
 
 	/**
@@ -419,18 +449,18 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 		if(!file_exists($baseFolderAbsolute)) {
 			@mkdir($baseFolderAbsolute, self::get_permissions_on_folder());
 		}
-		if(!file_exists($baseFolderAbsolute) {
+		if(!file_exists($baseFolderAbsolute)) {
 			user_error("Can not create folder: ".$baseFolderAbsolute);
 		}
 		$manifestExcludeFile = $baseFolderAbsolute."/"."_manifest_exclude";
-		if(!file_exists($manifestExcludeFile) {
+		if(!file_exists($manifestExcludeFile)) {
 			$manifestExcludeFileHandle = fopen($manifestExcludeFile, 'w') or user_error("Can not create ".$manifestExcludeFile);
 			fwrite($manifestExcludeFileHandle, "Please do not delete this file");
 			fclose($manifestExcludeFileHandle);
 		}
 		if(self::$add_htaccess_file) {
 			$htaccessfile = $baseFolderAbsolute."/".".htaccess";
-			if(!file_exists($htaccessfile) {
+			if(!file_exists($htaccessfile)) {
 				$htaccessfileHandle = fopen($htaccessfile, 'w') or user_error("Can not create ".$htaccessfile);
 				fwrite($htaccessfileHandle, "Options -Indexes");
 				fclose($htaccessfileHandle);

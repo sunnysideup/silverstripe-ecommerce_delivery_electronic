@@ -1,12 +1,21 @@
 ###############################################
-ecommerce delivery
+ecommerce delivery ELECTRONICALLY
 Pre 0.1 proof of concept
 ###############################################
 
-Adds pick-up and or delivery to your e-commerce order.
-You can set charges as fixed prices, based on total
-order charge or based on weight.  You can differ these
-costs per country.
+Allows you to let people download files based on
+a sale.
+
+THE KEY IS: add the following method to your buyable:
+
+function DownloadFiles(){
+ //return a DataObject Set of files here....
+}
+
+You can also add files to the Order Step.
+
+Make sure that you send a receipt AFTER you have created
+the files for download!
 
 Developers
 -----------------------------------------------

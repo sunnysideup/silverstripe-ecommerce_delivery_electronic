@@ -13,7 +13,9 @@
  * NOTA BENE: your buyable MUST have the following method:
  * DownloadFiles();
  *
- * This
+ * TODO: add ability to first "disable" and then delete files...
+ * TODO: add ability to restor downloads
+ *
  *
  */
 

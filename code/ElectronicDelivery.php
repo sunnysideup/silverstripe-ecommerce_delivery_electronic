@@ -57,10 +57,10 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 
 	/**
 	 * Can always run step.
-	 * @param DataObject - $order Order
+	 * @param Order $order
 	 * @return Boolean
 	 **/
-	public function initStep($order) {
+	public function initStep(Order $order) {
 		$oldDownloadFolders = $this->getFoldersToBeExpired();
 		if($oldDownloadFolders) {
 			foreach($oldDownloadFolders as $oldDownloadFolder) {
@@ -73,12 +73,14 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 
 	/**
 	 * Add the member to the order, in case the member is not an admin.
-	 *@param DataObject - $order Order
-	 *@return Boolean
+	 * @param Order $order
+	 * @return Boolean
 	 **/
-	public function doStep($order) {
+	public function doStep(Order $order) {
 		if(!DataObject::get_one("ElectronicDelivery_OrderLog", "\"OrderID\" = ".$order->ID)) {
-			$files = new DataObjectSet();
+			$files = new ArrayList();
+
+			// Add any global files specified in the orderstep
 			for($i = 1; $i < 8; $i++) {
 				$fieldName = "AdditionalFile".$i."ID";
 				if($this->$fieldName) {
@@ -86,6 +88,8 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 					$files->push($file);
 				}
 			}
+
+			// Look through the order items for downloadables
 			$items = $order->Items();
 			if($items) {
 				foreach($items as $item) {
@@ -102,6 +106,8 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 					}
 				}
 			}
+
+			// Create a log entry
 			$log = new ElectronicDelivery_OrderLog();
 			$log->OrderID = $order->ID;
 			$log->AuthorID = $order->MemberID;
@@ -114,11 +120,11 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 
 	/**
 	 * Allows the opportunity for the Order Step to add any fields to Order::getCMSFields
-	 *@param FieldSet $fields
-	 *@param Order $order
-	 *@return FieldSet
+	 * @param FieldList $fields
+	 * @param Order $order
+	 * @return FieldList
 	 **/
-	function addOrderStepFields(&$fields, $order) {
+	public function addOrderStepFields(FieldList $fields, Order $order) {
 		$fields = parent::addOrderStepFields($fields, $order);
 		$fields->addFieldToTab("Root.Next", new HeaderField("DownloadFiles", "Files are available for download", 3), "ActionNextStepManually");
 		return $fields;
@@ -165,7 +171,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 * Standard SS variable
 	 */
 	static $db = array(
-		"FolderName" => "Varchar(32)",
+		"FolderName" => "Varchar(255)",
 		"Expired" => "Boolean",
 		"FilesAsString" => "Text"
 	);

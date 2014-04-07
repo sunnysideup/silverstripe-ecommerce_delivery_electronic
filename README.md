@@ -1,7 +1,6 @@
-###############################################
+
 ecommerce delivery ELECTRONICALLY
-Pre 0.1 proof of concept
-###############################################
+================================================================================
 
 Allows you to let people download files based on
 a sale.

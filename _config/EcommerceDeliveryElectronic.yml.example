@@ -1,0 +1,11 @@
+---
+Name: ecommerce_delivery_electronic
+Before: 'mysite/*'
+After: 'ecommerce/*'
+---
+OrderStep:
+  order_steps_to_include:
+    step1: OrderStep_Created
+    step2: OrderStep_Submitted
+    step3: ElectronicDelivery_OrderStep
+    step4: OrderStep_Archived

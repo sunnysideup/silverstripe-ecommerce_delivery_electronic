@@ -159,7 +159,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 * @var String $order_dir - the root folder for the place where the files for the order are saved.
 	 * if the variable is equal to downloads then the downloads URL is www.mysite.com/downloads/
 	 */
-	private static $order_dir = 'downloads';
+	private static $order_dir = '_downloads';
 
 	public function getCMSFields() {
 		$fields = parent::getCMSFields();

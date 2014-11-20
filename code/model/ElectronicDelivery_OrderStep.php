@@ -112,11 +112,18 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 					$buyable = $item->Buyable();
 					if($buyable) {
 						$method = $this->Config()->get("download_method_in_byable");
-						if(method_exists($buyable, $method)) {
+						if($buyable->hasMethod($method)) {
 							$itemDownloadFiles = $buyable->$method();
-							if($itemDownloadFiles && $itemDownloadFiles->count()) {
-								foreach($itemDownloadFiles as $itemDownloadFile) {
-									$files->push($itemDownloadFile);
+							if($itemDownloadFiles) {
+								if($itemDownloadFiles instanceof DataList) {
+									if($itemDownloadFiles->count()) {
+										foreach($itemDownloadFiles as $itemDownloadFile) {
+											$files->push($itemDownloadFile);
+										}
+									}
+								}
+								else {
+									user_error("$method should return a Datalist. Specifically watch for has_one methods as they return a DataObject.", E_USER_NOTICE);
 								}
 							}
 						}

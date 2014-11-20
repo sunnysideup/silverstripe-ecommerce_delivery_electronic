@@ -23,6 +23,7 @@
 class ElectronicDelivery_OrderStep extends OrderStep {
 
 	private static $db = array(
+		"SendMessageToCustomer" => "Boolean",
 		"NumberOfHoursBeforeDownloadGetsDeleted" => "Float"
 	);
 
@@ -30,11 +31,17 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 		"AdditionalFiles" => "File"
 	);
 
+	private static $field_labels = array(
+		"SendMessageToCustomer" => "Send a message to the customer with download details?",
+		"NumberOfHoursBeforeDownloadGetsDeleted" => "Number of hours before download expires (you can use decimals (e.g. 0.5 equals half-an-hour)."
+	);
+
 	private static $defaults = array(
 		"Name" => "Download",
 		"Code" => "DOWNLOAD",
 		"Description" => "Customer downloads the files",
 		"NumberOfHoursBeforeDownloadGetsDeleted" => 72,
+		"SendMessageToCustomer" => true,
 
 		//customer privileges
 		"CustomerCanEdit" => 0,
@@ -54,10 +61,23 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 */
 	private static $download_method_in_byable = "DownloadFiles";
 
+	/**
+	 * The OrderStatusLog that is relevant to the particular step.
+	 * @var String
+	 */
+	protected $relevantLogEntryClassName = "ElectronicDelivery_OrderLog";
+
+	/**
+	 * @var String
+	 */
+	protected $emailClassName = "Order_StatusEmail";
+
+
 	public function getCMSFields() {
 		$fields = parent::getCMSFields();
-		$fields->addFieldToTab("Root.Main", new HeaderField("NumberOfHoursBeforeDownloadGetsDeleted_Header", _t("OrderStep.NUMBEROFHOURSBEFOREDOWNLOADGETSDELETED", "Download Management"), 3), "NumberOfHoursBeforeDownloadGetsDeleted");
-		$fields->addFieldToTab("Root.AdditionalFiles", new UploadField("AdditionalFiles", _t("OrderStep.ADDITIONALFILE", "Files added to download")));
+		$fields->addFieldToTab("Root.Main", new HeaderField("NumberOfHoursBeforeDownloadGetsDeleted_Header", _t("ElectronicDelivery_OrderStep.NUMBEROFHOURSBEFOREDOWNLOADGETSDELETED", "Download Management"), 3), "NumberOfHoursBeforeDownloadGetsDeleted");
+		$fields->addFieldToTab("Root.Main", new HeaderField("SendMessageToCustomer_Header", _t("ElectronicDelivery_OrderStep.SendMessageToCustomer", "Send a message to the customer?"), 3), "SendMessageToCustomer");
+		$fields->addFieldToTab("Root.AdditionalFiles", new UploadField("AdditionalFiles", _t("ElectronicDelivery_OrderStep.ADDITIONALFILE", "Files to be added to download")));
 		return $fields;
 	}
 
@@ -68,13 +88,9 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 * @return Boolean
 	 **/
 	public function initStep(Order $order) {
-		$oldDownloadFolders = $this->getFoldersToBeExpired();
-		if($oldDownloadFolders) {
-			foreach($oldDownloadFolders as $oldDownloadFolder) {
-				$oldDownloadFolder->Expired = 1;
-				$oldDownloadFolder->write();
-			}
-		}
+		//we do a quick clean-up.  A you can do this through a cron job...
+		$task = new ElectronicDownloadProductCleanUp();
+		$task->run(null);
 		return true;
 	}
 
@@ -84,53 +100,93 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 * @return Boolean
 	 **/
 	public function doStep(Order $order) {
-		$obj = ElectronicDelivery_OrderLog::get()
+		$logClassName = $this->getRelevantLogEntryClassName();
+		$obj = $logClassName::get()
 			->filter(array("OrderID" => $order->ID))
 			->first();
 		if(!$obj) {
 			$files = new ArrayList();
 			$items = $order->Items();
-			if($items) {
+			if($items && $items->count()) {
 				foreach($items as $item) {
 					$buyable = $item->Buyable();
 					if($buyable) {
 						$method = $this->Config()->get("download_method_in_byable");
-						$itemDownloadFiles = $buyable->$method();
-						if($itemDownloadFiles && $itemDownloadFiles->count()) {
-							foreach($itemDownloadFiles as $itemDownloadFile) {
-								debug::log("adding: ".$itemDownloadFile->ID);
-								$files->push($itemDownloadFile);
+						if(method_exists($buyable, $method)) {
+							$itemDownloadFiles = $buyable->$method();
+							if($itemDownloadFiles && $itemDownloadFiles->count()) {
+								foreach($itemDownloadFiles as $itemDownloadFile) {
+									$files->push($itemDownloadFile);
+								}
 							}
 						}
 					}
 				}
 			}
-			//additional files
-			$additionalFiles = $this->AdditionalFiles();
-			foreach($additionalFiles as $additionalFile) {
-				$files->push($additionalFile);
+			if($files->count()) {
+				//additional files ar only added to orders
+				//with downloads
+				$additionalFiles = $this->AdditionalFiles();
+				foreach($additionalFiles as $additionalFile) {
+					$files->push($additionalFile);
+				}
+				//create log with information...
+				$obj = $logClassName::create();
+				$obj->OrderID = $order->ID;
+				$obj->AuthorID = $order->MemberID;
+				$obj->NumberOfHoursBeforeDownloadGetsDeleted = $this->NumberOfHoursBeforeDownloadGetsDeleted;
+				$obj->write();
+				$obj->AddFiles($files);
 			}
-			//create log with information...
-			$obj = ElectronicDelivery_OrderLog::create();
-			$obj->OrderID = $order->ID;
-			$obj->AuthorID = $order->MemberID;
-			$obj->NumberOfHoursBeforeDownloadGetsDeleted = $this->NumberOfHoursBeforeDownloadGetsDeleted;
-			$obj->write();
-			$obj->AddFiles($files);
+			else {
+				//do nothingh....
+			}
 		}
 		return true;
 	}
 
+	/**
+	 * nextStep:
+	 * returns the next step (after it checks if everything is in place for the next step to run...)
+	 * @see Order::doNextStatus
+	 *
+	 * @param Order $order
+	 *
+	 * @return OrderStep | Null (next step OrderStep object)
+	 **/
+	public function nextStep(Order $order) {
+		if($orderLog = $this->RelevantLogEntry($order)) {
+			if($this->SendDetailsToCustomer){
+				if(!$this->hasBeenSent($order)) {
+					$subject = $this->EmailSubject;
+					$message = $this->CustomerMessage;
+					$order->sendEmail($subject, $message, $resend = false, $adminOnly = false, $this->getEmailClassName());
+				}
+			}
+			if($orderLog->IsExpired()) {
+				$orderLog->write();
+				return parent::nextStep($order);
+			}
+		}
+		//we immediately go to the next step if there is
+		//nothing to download ...
+		else {
+			return parent::nextStep($order);
+		}
+		return null;
+	}
 
 	/**
 	 * Allows the opportunity for the Order Step to add any fields to Order::getCMSFields
+	 *
 	 * @param FieldList $fields
 	 * @param Order $order
+	 *
 	 * @return FieldList
 	 **/
 	function addOrderStepFields(FieldList $fields, Order $order) {
 		$fields = parent::addOrderStepFields($fields, $order);
-		$fields->addFieldToTab("Root.Next", new HeaderField("DownloadFiles", "Files are available for download", 3), "ActionNextStepManually");
+		$fields->addFieldToTab("Root.Next", new HeaderField("DownloadFiles", _t("ElectronicDelivery_OrderStep.AVAILABLE_FOR_DOWNLOAD", "Files are available for download"), 3), "ActionNextStepManually");
 		return $fields;
 	}
 
@@ -139,18 +195,17 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 * @return String
 	 */
 	protected function myDescription(){
-		return _t("OrderStep.DOWNLOADED_DESCRIPTION", "During this step the customer downloads her or his order. The shop admininistrator does not do anything during this step.");
+		return _t("OrderStep.DOWNLOADED_DESCRIPTION", _t("ElectronicDelivery_OrderStep.description", "During this step the customer downloads her or his order. The shop admininistrator does not do anything during this step."));
 	}
 
 
-	protected function getFoldersToBeExpired() {
-		return ElectronicDelivery_OrderLog::get()
-			->where(
-				"\"Expired\" = 0 AND UNIX_TIMESTAMP(NOW())  - UNIX_TIMESTAMP(\"Created\")  > (60 * 60 * 24 * ".$this->NumberOfHoursBeforeDownloadGetsDeleted." ) "
-			);
+	/**
+	 * For some ordersteps this returns true...
+	 * @return Boolean
+	 **/
+	protected function hasCustomerMessage() {
+		return $this->SendMessageToCustomer;
 	}
-
-
 
 
 }

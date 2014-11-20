@@ -3,9 +3,27 @@ Name: ecommerce_delivery_electronic
 Before: 'mysite/*'
 After: 'ecommerce/*'
 ---
+### MUST SET ####
+### steps are examples only, but the key one to add is the
+### ElectronicDelivery_OrderStep
 OrderStep:
   order_steps_to_include:
     step1: OrderStep_Created
     step2: OrderStep_Submitted
     step3: ElectronicDelivery_OrderStep
     step4: OrderStep_Archived
+
+
+### OPTIONAL TWEAKS FROM HERE DOWNWARDS ###
+
+ElectronicDelivery_OrderStep:
+  download_method_in_byable: MyMethodForFilesToDownload
+
+ElectronicDelivery_OrderLog:
+  random_folder_name_character_count: 12
+  htaccess_content: 'Options -Indexes'
+  files_to_be_excluded:
+    - 'mypage.php'
+    - 'myimage.png'
+  permissions_on_folder: '0755'
+  order_dir: myfavouritefolderfordownloads

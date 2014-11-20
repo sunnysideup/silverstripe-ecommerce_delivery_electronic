@@ -5,17 +5,25 @@
  * It shows the download links
  * To make it work, you will have to add files.
  *
+ * When it is first written it creates a folder for the downloads
+ * you can then add files using the AddFiles method.
+ *
  *
  */
 class ElectronicDelivery_OrderLog extends OrderStatusLog {
+	/**
+	 * Use for debugging
+	 * uses debug::log
+	 * @boolean
+	 */
+	private $debug = false;
 
 	/**
 	 * Standard SS variable
 	 */
 	private static $db = array(
 		"FolderName" => "Varchar(32)",
-		"Expired" => "Boolean",
-		"FilesAsString" => "Text",
+		"Completed" => "Boolean",
 		"NumberOfHoursBeforeDownloadGetsDeleted" => "Float"
 	);
 
@@ -41,7 +49,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 */
 	private static $defaults = array(
 		"InternalUseOnly" => false,
-		"Expired" => false
+		"Completed" => false
 	);
 
 	/**
@@ -120,14 +128,21 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	private static $random_folder_name_character_count = 12;
 
 	/**
-	 * if set to true, an .htaccess file will be added to the download folder with the following
-	 * content: Options -Indexes
-	* @var Boolean
-	*/
-	private static $add_htaccess_file = true;
+	 * if set to anything except an empty string,
+	 * an .htaccess file will be added to the download folder
+	 * with the content of the variable
+	 * content idea: Options -Indexes (stops directly from listing folders)
+	 * @var String
+	 */
+	private static $htaccess_content = "";
 
 	/**
-	 * List of files to be ignored
+	 * List of files to be ignored when searching for files in the folder
+	 * This may allow you to add "hidden" files or ignore other files.
+	 * Can be added as
+	 *     1 => mypng.png
+	 *     2 => mysecondImage.jpg
+	 *
 	 * @var Array
 	 */
 	private static $files_to_be_excluded = array();
@@ -163,14 +178,18 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 		if(!$this->OrderID) {
 			user_error("Tried to add files to an ElectronicDelivery_OrderStatus object without an OrderID");
 		}
-		debug::log(print_r($listOfFiles, 1));
-		debug::log("COUNT: ".$listOfFiles->count());
+		if($this->debug) {
+			debug::log(print_r($listOfFiles, 1));
+			debug::log("COUNT: ".$listOfFiles->count());
+		}
 		//are there any files?
 		if($listOfFiles && $listOfFiles->count()){
-			debug::log("doing it");
+			if($this->debug) {
+				debug::log("doing it");
+			}
 			//create folder
-			$fullFolderPath = $this->createOrderDownloadFolder(true);
-			$folderOnlyPart = $this->createOrderDownloadFolder(false);
+			$fullFolderPath = $this->getOrderDownloadFolder(true);
+			$folderOnlyPart = $this->getOrderDownloadFolder(false);
 			$existingFiles = $this->Files();
 			$alreadyCopiedFileNameArray = array();
 
@@ -185,7 +204,9 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 					if(!in_array($copyFrom, $alreadyCopiedFileNameArray)) {
 						$alreadyCopiedFileNameArray[] = $fileName;
 						if(copy($copyFrom, $destinationFile)) {
-							$this->FilesAsString .= "\r\n COPYING $copyFrom to $destinationFile \r\n |||".serialize($file);
+							if($this->debug) {
+								debug::log("\r\n COPYING $copyFrom to $destinationFile \r\n |||".serialize($file));
+							}
 							$this->Note .= '<li><a href="'.$destinationURL.'" target="_blank">'.$file->Title.'</a></li>';
 						}
 					}
@@ -196,23 +217,26 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 			}
 		}
 		else {
+			$this->Completed = true;
 			$this->Note .= "<li>"._t("OrderStatusLog.THEREARENODOWNLOADSWITHTHISORDER", "There are no downloads for this order.")."</li>";
 		}
 		$this->Note .= "</ul>";
-		$this->Expired = false;
 		$this->write();
 	}
 
 
 	/**
-	 *
+	 * checks if the download has expired (i.e. too much time has passed)
 	 * @return Boolean
 	 */
 	public function IsExpired(){
-		if($this->Expired) {
+		if($this->Completed) {
 			return true;
 		}
-		return strtotime("Now") - strtotime($this->Created) > (60 * 60 * 24 * $this->NumberOfHoursBeforeDownloadGetsDeleted);
+		if(!$this->Created) {
+			return false;
+		}
+		return (strtotime("Now") - strtotime($this->Created)) > (60 * 60 * $this->NumberOfHoursBeforeDownloadGetsDeleted);
 	}
 
 	/**
@@ -222,9 +246,15 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	function onBeforeWrite() {
 		parent::onBeforeWrite();
 		if(!$this->IsExpired()) {
-			$this->FolderName = $this->createOrderDownloadFolder(true);
+			$this->FolderName = $this->getOrderDownloadFolder(true);
 		}
 	}
+
+	/**
+	 * making sure we dont end up in an infinite loop
+	 * @var int
+	 */
+	private $loopEscape = 0;
 
 	/**
 	 * Standard SS method
@@ -232,26 +262,33 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 */
 	function onAfterWrite() {
 		parent::onAfterWrite();
-		if($this->IsExpired() && $this->FolderName) {
-			$this->deleteFolderContents();
-			$this->Note = "<p>"._t("OrderStatusLog.DOWNLOADSHAVEEXPIRED", "Downloads have expired.")."</p>";
-			$this->FolderName = "";
-			$this->write();
+		if($this->FolderName) {
+			if($this->Completed) {
+				//do nothing ...
+			}
+			else {
+				$this->loopEscape++;
+				if($this->IsExpired() && $this->loopEscape < 10) {
+					$this->Note = "<p>"._t("OrderStatusLog.DOWNLOADSHAVEEXPIRED", "Downloads have expired.")."</p>";
+					$this->Completed = $this->deleteFolderContents();
+					$this->write();
+				}
+				elseif($this->loopEscape == 10) {
+					user_error("Tried to deleted ".$this->FolderName." 10 times without success", E_USER_NOTICE);
+				}
+			}
 		}
 	}
 
-
 	/**
 	 * Standard SS method
-	 * Deletes the files in the download folder, and the actual download folder itself.
-	 * You can use the "MakeExpired" method to stop downloads.
-	 * There is no need to delete the download.
+	 * Deletes the files in the download folder,
+	 * and the actual download folder itself.
 	 */
 	function onBeforeDelete(){
 		parent::onBeforeDelete();
-		if($this->FolderName) {
+		if($this->FolderName && !$this->Completed) {
 			$this->deleteFolderContents();
-			@unlink($this->FolderName);
 		}
 	}
 
@@ -272,27 +309,29 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 * creates a folder and returns the full folder path
 	 * if the folder is already created it still returns the folder path,
 	 * but it does not create the folder.
+	 *
 	 * @param Boolean $absolutePath
-	 * @return String
+	 *
+	 * @return NULL | String
 	 */
-	protected function createOrderDownloadFolder($absolutePath = true){
+	protected function getOrderDownloadFolder($absolutePath = true){
 		//already exists - do nothing
 		if($this->FolderName) {
 			$fullFolderName = $this->FolderName;
 		}
-		else {
-		//create folder....
+		elseif($baseFolder = $this->getBaseFolder(true)) {
+			//create folder....
 			$randomFolderName = substr(md5(time()+rand(1,999)), 0, $this->Config()->get("random_folder_name_character_count"))."_".$this->OrderID;
-			$fullFolderName = $this->getBaseFolder(true)."/".$randomFolderName;
+			$fullFolderName = $baseFolder."/".$randomFolderName;
 			if(file_exists($fullFolderName)) {
 				$allOk = true;
 			}
 			else {
-				$permissions = $this->Config()->get("permissions_on_folder") ? $this->Config()->get("permissions_on_folder") : Config::inst()->get('Filesystem', 'folder_create_mask');
-				$allOk = mkdir($fullFolderName, $permissions);
+				$allOk = mkdir($fullFolderName, $this->getFolderPermissions());
 			}
 			if(!file_exists($fullFolderName)) {
 				user_error("Can not create folder: ".$fullFolderName);
+				return;
 			}
 			if($allOk){
 				$this->FolderName = $fullFolderName;
@@ -308,20 +347,23 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	}
 
 	/**
-	 * returns the folder in which the orders are kept
+	 * returns the folder in which all the downloads are kept
 	 * (each order has an individual folder within this base folder)
+	 * returns location of base folder.
+	 *
 	 * @param Boolean $absolutePath - absolute folder path (set to false to get relative path)
-	 * @return String
+	 *
+	 * @return NULL | String
 	 */
 	protected function getBaseFolder($absolutePath = true) {
 		$baseFolderRelative = $this->Config()->get("order_dir");
 		$baseFolderAbsolute = Director::baseFolder()."/".$baseFolderRelative;
 		if(!file_exists($baseFolderAbsolute)) {
-			$permissions = $this->Config()->get("permissions_on_folder") ? $this->Config()->get("permissions_on_folder") : Config::inst()->get('Filesystem', 'folder_create_mask');
-			mkdir($baseFolderAbsolute, $permissions);
+			mkdir($baseFolderAbsolute, $this->getFolderPermissions());
 		}
 		if(!file_exists($baseFolderAbsolute)) {
 			user_error("Can not create folder: ".$baseFolderAbsolute);
+			return;
 		}
 		$manifestExcludeFile = $baseFolderAbsolute."/"."_manifest_exclude";
 		if(!file_exists($manifestExcludeFile)) {
@@ -329,12 +371,12 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 			fwrite($manifestExcludeFileHandle, "Please do not delete this file");
 			fclose($manifestExcludeFileHandle);
 		}
-		if($this->Config()->get("add_htaccess_file")) {
-			$htaccessfile = $baseFolderAbsolute."/".".htaccess";
-			if(!file_exists($htaccessfile)) {
-				$htaccessfileHandle = fopen($htaccessfile, 'w') or user_error("Can not create ".$htaccessfile);
-				fwrite($htaccessfileHandle, "Options -Indexes");
-				fclose($htaccessfileHandle);
+		if($htAccessContent = $this->Config()->get("htaccess_content")) {
+			$htAccessFile = $baseFolderAbsolute."/".".htaccess";
+			if(!file_exists($htAccessFile)) {
+				$htAccessFileHandle = fopen($htaccessfile, 'w') or user_error("Can not create ".$htAccessFile);
+				fwrite($htAccessFileHandle, $htAccessContent);
+				fclose($htAccessFileHandle);
 			}
 		}
 		if($absolutePath) {
@@ -345,10 +387,21 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 		}
 	}
 
-
+	/**
+	 * returns the permissions for the folder to be created.
+	 * @return String
+	 */
+	protected function getFolderPermissions(){
+		return $this->Config()->get("permissions_on_folder") ? $this->Config()->get("permissions_on_folder") : Config::inst()->get('Filesystem', 'folder_create_mask');
+	}
 
 	/**
 	 * get folder contents
+	 *
+	 * @param String $fullPath (e.g. /var/www/mysite.co.nz/downloads)
+	 * @param Boolean $showFiles - list the files in the directory?
+	 * @param Boolean $showFolders - list the folders in the directory?
+	 *
 	 * @return array
 	 */
 	protected function getDirectoryContents($fullPath, $showFiles = false, $showFolders = false) {
@@ -373,18 +426,25 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	}
 
 	/**
-	 * remove all the folder contents
+	 * remove all the folder contents and remove the folder itself
+	 * as well... Returns true on success.
+	 * Assumes that there are no folders in the folder...
 	 *
+	 * @return Boolean
 	 */
 	protected function deleteFolderContents(){
 		if($this->FolderName) {
-			$files = $this->getDirectoryContents($this->FolderName, $showFiles = 1, $showFolders = 0);
-			if($files) {
-				foreach($files as $file) {
-					unlink($file);
+			if(file_exists($this->FolderName)) {
+				$files = $this->getDirectoryContents($this->FolderName, $showFiles = 1, $showFolders = 0);
+				if($files) {
+					foreach($files as $file) {
+						unlink($file);
+					}
 				}
+				return rmdir($this->FolderName);
 			}
 		}
+		return true;
 	}
 
 

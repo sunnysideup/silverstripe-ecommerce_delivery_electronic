@@ -56,7 +56,7 @@ class ElectronicDownloadProduct extends Product {
 }
 
 
-class ElectronicDeliveryProduct_Controller extends Product_Controller {
+class ElectronicDownloadProduct_Controller extends Product_Controller {
 
 }
 

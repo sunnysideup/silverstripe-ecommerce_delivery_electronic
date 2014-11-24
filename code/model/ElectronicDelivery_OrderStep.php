@@ -88,9 +88,6 @@ class ElectronicDelivery_OrderStep extends OrderStep {
 	 * @return Boolean
 	 **/
 	public function initStep(Order $order) {
-		//we do a quick clean-up.  A you can do this through a cron job...
-		$task = new ElectronicDownloadProductCleanUp();
-		$task->run(null);
 		return true;
 	}
 

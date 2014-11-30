@@ -13,7 +13,10 @@ class ElectronicDownloadProductCleanUp extends BuildTask{
 		foreach($items as $item) {
 			if($item->IsExpired()) {
 				//a simple write will take care of all the deletion process...
-				$item->write();
+				$item->write(false, false, true);
+			}
+			else {
+				//do nothing
 			}
 		}
 	}

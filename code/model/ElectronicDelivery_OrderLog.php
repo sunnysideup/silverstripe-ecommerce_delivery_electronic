@@ -22,7 +22,7 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	 * Standard SS variable
 	 */
 	private static $db = array(
-		"FolderName" => "Varchar(32)",
+		"FolderName" => "Varchar(255)",
 		"Completed" => "Boolean",
 		"NumberOfHoursBeforeDownloadGetsDeleted" => "Float"
 	);
@@ -277,6 +277,8 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 					user_error("Tried to deleted ".$this->FolderName." 10 times without success", E_USER_NOTICE);
 				}
 			}
+		}
+		else {
 		}
 	}
 

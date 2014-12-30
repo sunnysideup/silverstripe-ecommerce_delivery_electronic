@@ -251,24 +251,28 @@ class ElectronicDelivery_OrderLog extends OrderStatusLog {
 	}
 
 	/**
-	 * making sure we dont end up in an infinite loop
-	 * @var int
-	 */
-	private $loopEscape = 0;
-
-	/**
 	 * Standard SS method
 	 * If it has expired, then the folder is deleted...
 	 */
 	function onAfterWrite() {
 		parent::onAfterWrite();
+		$this->deleteFolderIfExpired();
+	}
+
+	/**
+	 * making sure we dont end up in an infinite loop
+	 * @var int
+	 */
+	private $loopEscape = 0;
+
+	public function deleteFolderIfExpired(){
 		if($this->FolderName) {
 			if($this->Completed) {
 				//do nothing ...
 			}
 			else {
-				$this->loopEscape++;
-				if($this->IsExpired() && $this->loopEscape < 10) {
+				if($this->IsExpired() && $this->loopEscape > 0) {
+					$this->loopEscape++;
 					$this->Note = "<p>"._t("OrderStatusLog.DOWNLOADSHAVEEXPIRED", "Downloads have expired.")."</p>";
 					$this->Completed = $this->deleteFolderContents();
 					$this->write();

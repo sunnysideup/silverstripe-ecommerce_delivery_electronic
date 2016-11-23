@@ -3,13 +3,15 @@
     "type": "silverstripe-module",
     "description": "add electronic products to your silverstripe e-commerce",
     "keywords": [
+        "Silverstripe-CMS",
+        "CMS",
+        "Silverstripe",
         "ecommerce",
         "e-commerce",
         "shop",
         "delivery electronic",
         "delivery",
-        "electronic",
-        "silverstripe"
+        "electronic"
     ],
     "license": "Sunny Side Up (BSD-3-Clause and CUSTOM)",
     "authors": [
@@ -22,6 +24,7 @@
     "require": {
         "php": ">=5.3.2",
         "silverstripe/framework": "~3.1",
-        "sunnysideup/ecommerce": "*"
+        "sunnysideup/ecommerce": "*",
+        "silverstripe/cms": "~3.1"
     }
 }
